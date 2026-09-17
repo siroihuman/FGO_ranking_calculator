@@ -42,6 +42,12 @@ export interface ServantHiddenStatusValues {
   noblePhantasmHits?: number;
 }
 
+export interface ServantCommandCardCounts {
+  quick: number;
+  arts: number;
+  buster: number;
+}
+
 export interface ServantStatusRecord {
   id: string;
   source: ServantSource;
@@ -53,4 +59,5 @@ export interface ServantStatusRecord {
   rarity: 1 | 2 | 3 | 4 | 5;
   status: ServantStatusValues;
   hidden?: ServantHiddenStatusValues;
+  cards?: ServantCommandCardCounts;
 }
