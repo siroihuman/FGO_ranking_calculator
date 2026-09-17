@@ -1,3 +1,5 @@
+import type { NormalizedRankingEffect } from "../effects/types.js";
+import { resolveRankingModifierTotals } from "../effects/rankingModifiers.js";
 import type {
   ServantCommandCardCounts,
   ServantSource,
@@ -21,6 +23,7 @@ export interface StarRankingServant {
   busterHits?: number;
   extraHits?: number;
   cards: ServantCommandCardCounts;
+  record?: ServantStatusRecord;
 }
 
 export interface StarRankingOptions {
@@ -31,12 +34,16 @@ export interface StarRankingOptions {
   overkillHits?: number;
   enemyStarRatePermille?: number;
   source?: "all" | ServantSource;
+  skills?: boolean;
+  conditionalEffects?: boolean;
 }
 
 export interface StarRankingEntry extends StarRankingServant {
   rank: number;
   expectedStars: number;
   hits: number;
+  usesProbabilisticEffect: boolean;
+  appliedEffects: NormalizedRankingEffect[];
 }
 
 export function starRankingServantsFromStatus(
@@ -57,6 +64,7 @@ export function starRankingServantsFromStatus(
       busterHits: hidden.busterHits,
       extraHits: hidden.extraHits,
       cards: record.cards,
+      record,
     }];
   });
 }
@@ -77,6 +85,14 @@ export function buildStarRanking(
     if (source !== "all" && servant.source !== source) return [];
     const hits = hitsFor(servant, options.cardType);
     if (hits === undefined || hits <= 0) return [];
+    const modifiers = servant.record
+      ? resolveRankingModifierTotals(servant.record, {
+          includeSkills: options.skills ?? false,
+          includeConditionalEffects: options.conditionalEffects ?? false,
+          cardType: options.cardType === "extra" ? undefined : options.cardType,
+          noblePhantasm: false,
+        })
+      : undefined;
     const expectedStars = calculateNormalCardExpectedStars({
       starRate: servant.starRate,
       cardType: options.cardType,
@@ -86,8 +102,18 @@ export function buildStarRanking(
       critical: options.critical,
       overkillHits: options.overkillHits,
       enemyStarRatePermille: options.enemyStarRatePermille,
+      cardPerformanceModPermille: modifiers?.cardPerformanceModPermille,
+      cardResistancePermille: modifiers?.cardResistancePermille,
+      starGenerationModPermille: modifiers?.starGenerationModPermille,
     });
-    return [{ ...servant, rank: 0, expectedStars, hits }];
+    return [{
+      ...servant,
+      rank: 0,
+      expectedStars,
+      hits,
+      usesProbabilisticEffect: modifiers?.usesProbabilisticEffect ?? false,
+      appliedEffects: modifiers?.appliedEffects ?? [],
+    }];
   });
 
   rows.sort((left, right) =>
