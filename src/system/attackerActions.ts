@@ -50,6 +50,7 @@ export function buildAttackerNpChargeActions(
       owner: "attacker",
       ...(skill.ct === undefined ? { maxUses: 1 } : { cooldownTurns: skill.ct, maxUses: 3 }),
       npGrant,
+      skillReloadingEligible: true,
       conditional,
       probabilistic,
     }];
