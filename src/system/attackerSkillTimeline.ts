@@ -16,10 +16,19 @@ import {
   type SystemActionDefinition,
 } from "./actionSimulator.js";
 import type { SystemPreset } from "./presets.js";
+import {
+  loadoutInitialNpBonus,
+  loadoutSkillReloadingUses,
+  mysticCodeTimelineAction,
+  type SystemExternalTimelineAction,
+  type SystemLoadout,
+} from "./systemLoadout.js";
 
 export interface AttackerSkillTimelineOptions {
   conditionalEffects?: boolean;
   cardType: CommandCardType;
+  includeAttackerSkills?: boolean;
+  loadout?: SystemLoadout;
 }
 
 export interface AttackerSkillTimelineWave {
@@ -70,6 +79,7 @@ function skillAction(
       ? { maxUses: 1 }
       : { cooldownTurns: skill.ct, maxUses: 3 }),
     ...(npGrant > 0 ? { npGrant } : {}),
+    skillReloadingEligible: true,
     conditional: skill.effects.some((effect) => Boolean(effect.conditionText)),
     probabilistic: skill.effects.some((effect) => effect.probabilistic),
   };
@@ -94,10 +104,11 @@ function selectedIds(mask: number, skills: readonly ServantSkillData[]): string[
 function planForOrderMode(
   preset: SystemPreset,
   attackerIdsByWave: readonly [readonly string[], readonly string[], readonly string[]],
+  externalIdsByWave: readonly [readonly string[], readonly string[], readonly string[]],
   orderMask: number,
 ): [string[], string[], string[]] {
   return [0, 1, 2].map((index) => {
-    const support = [...preset.defaultActionsByWave[index]];
+    const support = [...preset.defaultActionsByWave[index], ...externalIdsByWave[index]];
     const attacker = [...attackerIdsByWave[index]];
     return orderMask & (1 << index)
       ? [...attacker, ...support]
@@ -123,9 +134,30 @@ function consumesOnNoblePhantasm(
     || effect.type === "fixed_damage";
 }
 
+function addTimedEffects(
+  active: ActiveTimedEffect[],
+  effects: readonly NormalizedRankingEffect[],
+  wave: number,
+  conditionalEffects: boolean,
+): void {
+  for (const effect of effects) {
+    if (!conditionalEffects && effect.conditionText) continue;
+    const duration = Math.max(1, effect.durationTurns ?? 1);
+    active.push({
+      effect,
+      expiresAfterWave: enemyTarget(effect) ? wave : wave + duration - 1,
+      ...(effect.remainingUses !== undefined
+        ? { usesRemaining: effect.remainingUses }
+        : {}),
+    });
+  }
+}
+
 function timelineWaves(
   skills: readonly ServantSkillData[],
   attackerIdsByWave: readonly [readonly string[], readonly string[], readonly string[]],
+  externalIdsByWave: readonly [readonly string[], readonly string[], readonly string[]],
+  externalAction: SystemExternalTimelineAction | undefined,
   options: AttackerSkillTimelineOptions,
 ): [AttackerSkillTimelineWave, AttackerSkillTimelineWave, AttackerSkillTimelineWave] {
   const skillById = new Map(skills.map((skill) => [`attacker-s${skill.slot}`, skill]));
@@ -139,17 +171,19 @@ function timelineWaves(
     for (const id of usedSkillIds) {
       const skill = skillById.get(id);
       if (!skill) continue;
-      for (const effect of skill.effects) {
-        if (!options.conditionalEffects && effect.conditionText) continue;
-        const duration = Math.max(1, effect.durationTurns ?? 1);
-        active.push({
-          effect,
-          expiresAfterWave: enemyTarget(effect) ? wave : wave + duration - 1,
-          ...(effect.remainingUses !== undefined
-            ? { usesRemaining: effect.remainingUses }
-            : {}),
-        });
-      }
+      addTimedEffects(active, skill.effects, wave, options.conditionalEffects ?? false);
+    }
+
+    if (
+      externalAction?.effects
+      && externalIdsByWave[index].includes(externalAction.action.id)
+    ) {
+      addTimedEffects(
+        active,
+        externalAction.effects,
+        wave,
+        options.conditionalEffects ?? false,
+      );
     }
 
     const activeEffects = active.map((entry) => entry.effect);
@@ -183,38 +217,28 @@ function timelineWaves(
   ];
 }
 
-/**
- * Enumerates legal three-wave self-skill timelines.
- *
- * Each of the attacker's three current skills may be used at most once per
- * wave. Re-use on later waves is permitted only when its parsed CT and preset
- * cooldown reductions make that use legal. For waves containing cooldown
- * reduction, both "support first" and "attacker first" orders are tested.
- */
+/** Enumerates legal three-wave self-skill and Mystic Code timelines. */
 export function enumerateAttackerSkillTimelines(
   servant: ServantStatusRecord,
   preset: SystemPreset,
   options: AttackerSkillTimelineOptions,
 ): AttackerSkillTimeline[] {
-  const skills = currentRankingSkills(servant.skills);
-  if (skills.length === 0) {
-    const empty: [readonly string[], readonly string[], readonly string[]] = [[], [], []];
-    return [{
-      actionsByWave: preset.defaultActionsByWave,
-      waves: timelineWaves(skills, empty, options),
-      skillUses: 0,
-      usesConditionalEffect: false,
-      usesProbabilisticEffect: false,
-    }];
-  }
-
+  const skills = options.includeAttackerSkills === false
+    ? []
+    : currentRankingSkills(servant.skills);
+  const externalAction = mysticCodeTimelineAction(options.loadout?.mysticCode);
   const attackerActions = skills.map((skill) =>
     skillAction(skill, options.conditionalEffects ?? false),
   );
-  const allActions = [...preset.actions, ...attackerActions];
+  const allActions = [
+    ...preset.actions,
+    ...attackerActions,
+    ...(externalAction ? [externalAction.action] : []),
+  ];
   const maskLimit = 1 << skills.length;
   const results: AttackerSkillTimeline[] = [];
   const seen = new Set<string>();
+  const externalWaveCandidates = externalAction ? [0, 1, 2, 3] : [0];
 
   for (let wave1Mask = 0; wave1Mask < maskLimit; wave1Mask += 1) {
     for (let wave2Mask = 0; wave2Mask < maskLimit; wave2Mask += 1) {
@@ -224,38 +248,58 @@ export function enumerateAttackerSkillTimelines(
           selectedIds(wave2Mask, skills),
           selectedIds(wave3Mask, skills),
         ];
-        const timeline = timelineWaves(skills, attackerIdsByWave, options);
 
-        for (let orderMask = 0; orderMask < 8; orderMask += 1) {
-          const actionsByWave = planForOrderMode(preset, attackerIdsByWave, orderMask);
-          const key = JSON.stringify(actionsByWave);
-          if (seen.has(key)) continue;
-          seen.add(key);
+        for (const externalWave of externalWaveCandidates) {
+          const externalIdsByWave: [string[], string[], string[]] = [[], [], []];
+          if (externalAction && externalWave > 0) {
+            externalIdsByWave[externalWave - 1].push(externalAction.action.id);
+          }
+          const timeline = timelineWaves(
+            skills,
+            attackerIdsByWave,
+            externalIdsByWave,
+            externalAction,
+            options,
+          );
 
-          const simulation = simulateSystemActionPlan({
-            initialNp: preset.initialNp,
-            refundByWave: [100, 100, 100],
-            actions: allActions,
-            actionsByWave,
-            ...(preset.postNoblePhantasmNpByWave
-              ? { postNoblePhantasmNpByWave: preset.postNoblePhantasmNpByWave }
-              : {}),
-          });
-          if (simulation.invalidActions.length > 0) continue;
+          for (let orderMask = 0; orderMask < 8; orderMask += 1) {
+            const actionsByWave = planForOrderMode(
+              preset,
+              attackerIdsByWave,
+              externalIdsByWave,
+              orderMask,
+            );
+            const key = JSON.stringify(actionsByWave);
+            if (seen.has(key)) continue;
+            seen.add(key);
 
-          const skillUses = attackerIdsByWave.reduce((sum, ids) => sum + ids.length, 0);
-          results.push({
-            actionsByWave,
-            waves: timeline,
-            skillUses,
-            usesConditionalEffect: timeline.some((wave) =>
-              wave.activeEffects.some((effect) => Boolean(effect.conditionText)),
-            ),
-            usesProbabilisticEffect: timeline.some((wave) =>
-              wave.activeEffects.some((effect) => effect.probabilistic),
-            ),
-          });
-          break;
+            const simulation = simulateSystemActionPlan({
+              initialNp: preset.initialNp + loadoutInitialNpBonus(options.loadout),
+              refundByWave: [100, 100, 100],
+              actions: allActions,
+              actionsByWave,
+              ...(preset.postNoblePhantasmNpByWave
+                ? { postNoblePhantasmNpByWave: preset.postNoblePhantasmNpByWave }
+                : {}),
+              skillReloadingUses: loadoutSkillReloadingUses(options.loadout),
+            });
+            if (simulation.invalidActions.length > 0) continue;
+
+            const skillUses = attackerIdsByWave.reduce((sum, ids) => sum + ids.length, 0)
+              + externalIdsByWave.reduce((sum, ids) => sum + ids.length, 0);
+            results.push({
+              actionsByWave,
+              waves: timeline,
+              skillUses,
+              usesConditionalEffect: timeline.some((wave) =>
+                wave.activeEffects.some((effect) => Boolean(effect.conditionText)),
+              ),
+              usesProbabilisticEffect: timeline.some((wave) =>
+                wave.activeEffects.some((effect) => effect.probabilistic),
+              ),
+            });
+            break;
+          }
         }
       }
     }
