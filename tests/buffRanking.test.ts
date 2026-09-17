@@ -80,6 +80,16 @@ function servant(): ServantStatusRecord {
             activationRatePercent: 80,
             isSpecialAttack: false,
           },
+          {
+            type: "attack",
+            target: "self",
+            rawText: "HP50%以下の時、自身の攻撃力をアップ",
+            value: 40,
+            unit: "percent",
+            probabilistic: false,
+            conditionText: "HP50%以下の時",
+            isSpecialAttack: false,
+          },
         ],
       },
     ],
@@ -128,5 +138,17 @@ describe("buildBuffRanking", () => {
       category: "quick",
     });
     expect(row.value).toBe(50);
+  });
+
+  it("only includes external conditional buffs when conditional mode is on", () => {
+    const [off] = buildBuffRanking([servant()], {
+      target: "self",
+      conditionalEffects: false,
+    });
+    const [on] = buildBuffRanking([servant()], {
+      target: "self",
+      conditionalEffects: true,
+    });
+    expect(on.value).toBe(off.value + 40);
   });
 });
