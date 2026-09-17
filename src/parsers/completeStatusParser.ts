@@ -1,4 +1,5 @@
 import type { ServantStatusRecord } from "../types/servant.js";
+import { parseCommandCardCounts } from "./cardDeckParser.js";
 import { parseHiddenStatusPage } from "./hiddenStatusParser.js";
 import {
   parseServantStatusPage,
@@ -11,5 +12,10 @@ export function parseServantCompleteStatusPage(
 ): ServantStatusRecord {
   const base = parseServantStatusPage(html, identity);
   const hidden = parseHiddenStatusPage(html);
-  return hidden ? { ...base, hidden } : base;
+  const cards = parseCommandCardCounts(html);
+  return {
+    ...base,
+    ...(hidden ? { hidden } : {}),
+    cards,
+  };
 }
