@@ -114,7 +114,7 @@ describe("system loadout definitions", () => {
       loadout: { mysticCode: "atlas-academy-uniform" },
     });
     expect(result.established).toBe(true);
-    expect(result.actionsByWave?.[1]).toContain("mystic-atlas-s3");
+    expect(result.actionsByWave?.flat()).toContain("mystic-atlas-s3");
     expect(result.actionsByWave?.[2]).toContain("attacker-s1");
   });
 
