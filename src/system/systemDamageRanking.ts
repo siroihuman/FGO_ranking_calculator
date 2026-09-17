@@ -1,6 +1,8 @@
 import {
-  resolveRankingModifierTotals,
+  activeRankingEffects,
+  resolveEffectModifierTotals,
   type OverchargeStage,
+  type RankingModifierTotals,
 } from "../effects/rankingModifiers.js";
 import { calculateDamage } from "../formulas/damage.js";
 import type {
@@ -16,6 +18,10 @@ import {
   resolveSystemModifiers,
   systemOverchargeStage,
 } from "./supportModifiers.js";
+import {
+  enumerateAttackerSkillTimelines,
+  type AttackerSkillTimeline,
+} from "./attackerSkillTimeline.js";
 
 const NP_CARD_DAMAGE_VALUE_PERMILLE: Record<CommandCardType, number> = {
   buster: 1500,
@@ -74,6 +80,7 @@ export interface SystemDamageRankingEntry {
   waves: readonly [SystemDamageWaveResult, SystemDamageWaveResult, SystemDamageWaveResult];
   totalAverageDamage: number;
   usesProbabilisticEffect: boolean;
+  attackerSkillPlan?: readonly [readonly string[], readonly string[], readonly string[]];
 }
 
 function attackAtLevel(servant: ServantStatusRecord, level: StatusLevel): number | null {
@@ -102,6 +109,112 @@ function sortValue(
   return entry.totalAverageDamage;
 }
 
+function modifierTotalsForWave(
+  servant: ServantStatusRecord,
+  cardType: CommandCardType,
+  oc: OverchargeStage,
+  conditionalEffects: boolean,
+  timeline: AttackerSkillTimeline | undefined,
+  waveIndex: number,
+): RankingModifierTotals {
+  const baseEffects = activeRankingEffects(servant, {
+    includeSkills: false,
+    includeConditionalEffects: conditionalEffects,
+    cardType,
+    noblePhantasm: true,
+    overchargeStage: oc,
+    includeNoblePhantasmPreAttackEffects: true,
+  });
+  const timedEffects = timeline?.waves[waveIndex].activeEffects ?? [];
+  return resolveEffectModifierTotals([...baseEffects, ...timedEffects], {
+    includeConditionalEffects: conditionalEffects,
+    cardType,
+    noblePhantasm: true,
+  });
+}
+
+function oneDamage(
+  servant: ServantStatusRecord,
+  attack: number,
+  multiplier: number,
+  modifiers: ReturnType<typeof resolveSystemModifiers>,
+  randomModifierPermille: number,
+): number {
+  const np = servant.noblePhantasm!;
+  return calculateDamage({
+    attack,
+    isNoblePhantasm: true,
+    npDamageMultiplierPermille: multiplier,
+    cardDamageValuePermille: NP_CARD_DAMAGE_VALUE_PERMILLE[np.cardType],
+    cardPerformanceModPermille: modifiers.cardPerformanceModPermille,
+    cardResistancePermille: modifiers.cardResistancePermille,
+    firstCardBonusPermille: 0,
+    classAttackCoefficientPermille: CLASS_ATTACK_COEFFICIENT_PERMILLE[servant.className],
+    classAffinityPermille: 1000,
+    attributeAffinityPermille: 1000,
+    randomModifierPermille,
+    attackModPermille: modifiers.attackModPermille,
+    defenseModPermille: modifiers.defenseModPermille,
+    npDamageModPermille: modifiers.npDamageModPermille,
+    fixedDamage: modifiers.fixedDamage,
+    extraCardModifierPermille: 1000,
+    npSpecialAttackPermille: 1000,
+  }).damage;
+}
+
+function proxyTimelineScore(
+  servant: ServantStatusRecord,
+  preset: SystemPreset,
+  attack: number,
+  multiplier: number,
+  baseOc: OverchargeStage,
+  conditionalEffects: boolean,
+  sortBy: SystemDamageSort,
+  timeline: AttackerSkillTimeline | undefined,
+): number {
+  const waveValues = [0, 1, 2].map((waveIndex) => {
+    const support = preset.supportModifiersByWave?.[waveIndex];
+    const oc = systemOverchargeStage(baseOc, support);
+    const attacker = modifierTotalsForWave(
+      servant,
+      preset.cardType,
+      oc,
+      conditionalEffects,
+      timeline,
+      waveIndex,
+    );
+    return oneDamage(
+      servant,
+      attack,
+      multiplier,
+      resolveSystemModifiers(attacker, support),
+      1000,
+    );
+  });
+  if (sortBy === "wave1") return waveValues[0];
+  if (sortBy === "wave2") return waveValues[1];
+  if (sortBy === "wave3") return waveValues[2];
+  return waveValues.reduce((sum, value) => sum + value, 0);
+}
+
+function betterTimeline(
+  left: AttackerSkillTimeline | undefined,
+  right: AttackerSkillTimeline,
+  leftScore: number,
+  rightScore: number,
+): boolean {
+  if (!left) return true;
+  if (rightScore !== leftScore) return rightScore > leftScore;
+  if (right.skillUses !== left.skillUses) return right.skillUses < left.skillUses;
+  if (right.usesConditionalEffect !== left.usesConditionalEffect) {
+    return !right.usesConditionalEffect;
+  }
+  if (right.usesProbabilisticEffect !== left.usesProbabilisticEffect) {
+    return !right.usesProbabilisticEffect;
+  }
+  return JSON.stringify(right.actionsByWave).localeCompare(JSON.stringify(left.actionsByWave)) < 0;
+}
+
 export function buildSystemDamageRanking(
   servants: readonly ServantStatusRecord[],
   preset: SystemPreset,
@@ -114,6 +227,7 @@ export function buildSystemDamageRanking(
   const welfare = options.welfarePageIds ?? [];
   const baseOc = options.overchargeStage ?? 1;
   const sortBy = options.sortBy ?? "total";
+  const conditionalEffects = options.conditionalEffects ?? false;
 
   const rows = servants.flatMap((servant) => {
     if (source !== "all" && servant.source !== source) return [];
@@ -125,42 +239,48 @@ export function buildSystemDamageRanking(
     const multiplier = np.damageMultiplierPermilleByLevel?.[npLevel - 1];
     if (multiplier === undefined) return [];
     const attack = baseAttack + fou;
-    let usesProbabilisticEffect = false;
 
+    let selectedTimeline: AttackerSkillTimeline | undefined;
+    if (options.includeAttackerSkills) {
+      let selectedScore = Number.NEGATIVE_INFINITY;
+      for (const timeline of enumerateAttackerSkillTimelines(servant, preset, {
+        cardType: preset.cardType,
+        conditionalEffects,
+      })) {
+        const score = proxyTimelineScore(
+          servant,
+          preset,
+          attack,
+          multiplier,
+          baseOc,
+          conditionalEffects,
+          sortBy,
+          timeline,
+        );
+        if (betterTimeline(selectedTimeline, timeline, selectedScore, score)) {
+          selectedTimeline = timeline;
+          selectedScore = score;
+        }
+      }
+    }
+
+    let usesProbabilisticEffect = selectedTimeline?.usesProbabilisticEffect ?? false;
     const waves = [0, 1, 2].map((waveIndex) => {
       const support = preset.supportModifiersByWave?.[waveIndex];
       const oc = systemOverchargeStage(baseOc, support);
-      const attackerModifiers = resolveRankingModifierTotals(servant, {
-        includeSkills: options.includeAttackerSkills ?? false,
-        includeConditionalEffects: options.conditionalEffects ?? false,
-        cardType: np.cardType,
-        noblePhantasm: true,
-        overchargeStage: oc,
-        includeNoblePhantasmPreAttackEffects: true,
-      });
+      const attackerModifiers = modifierTotalsForWave(
+        servant,
+        np.cardType,
+        oc,
+        conditionalEffects,
+        selectedTimeline,
+        waveIndex,
+      );
       usesProbabilisticEffect ||= attackerModifiers.usesProbabilisticEffect;
       const modifiers = resolveSystemModifiers(attackerModifiers, support);
       const damages: number[] = [];
       for (let random = 900; random <= 1099; random += 1) {
-        damages.push(calculateDamage({
-          attack,
-          isNoblePhantasm: true,
-          npDamageMultiplierPermille: multiplier,
-          cardDamageValuePermille: NP_CARD_DAMAGE_VALUE_PERMILLE[np.cardType],
-          cardPerformanceModPermille: modifiers.cardPerformanceModPermille,
-          cardResistancePermille: modifiers.cardResistancePermille,
-          firstCardBonusPermille: 0,
-          classAttackCoefficientPermille: CLASS_ATTACK_COEFFICIENT_PERMILLE[servant.className],
-          classAffinityPermille: 1000,
-          attributeAffinityPermille: 1000,
-          randomModifierPermille: random,
-          attackModPermille: modifiers.attackModPermille,
-          defenseModPermille: modifiers.defenseModPermille,
-          npDamageModPermille: modifiers.npDamageModPermille,
-          fixedDamage: modifiers.fixedDamage,
-          extraCardModifierPermille: 1000,
-          npSpecialAttackPermille: 1000,
-        }).damage);
+        damages.push(oneDamage(servant, attack, multiplier, modifiers, random));
       }
       const total = damages.reduce((sum, value) => sum + value, 0);
       return {
@@ -179,6 +299,7 @@ export function buildSystemDamageRanking(
       waves,
       totalAverageDamage: waves.reduce((sum, wave) => sum + wave.averageDamage, 0),
       usesProbabilisticEffect,
+      ...(selectedTimeline ? { attackerSkillPlan: selectedTimeline.actionsByWave } : {}),
     }];
   });
 
