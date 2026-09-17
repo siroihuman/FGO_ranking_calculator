@@ -1,11 +1,6 @@
 import { load } from "cheerio";
+import type { ServantCommandCardCounts } from "../types/servant.js";
 import { expandTableRows, normalizeCellText } from "./tableGrid.js";
-
-export interface CommandCardCounts {
-  quick: number;
-  arts: number;
-  buster: number;
-}
 
 function parseCount(value: string): number | undefined {
   const normalized = normalizeCellText(value);
@@ -14,7 +9,7 @@ function parseCount(value: string): number | undefined {
   return Number.isSafeInteger(count) ? count : undefined;
 }
 
-export function parseCommandCardCounts(html: string): CommandCardCounts {
+export function parseCommandCardCounts(html: string): ServantCommandCardCounts {
   const $ = load(html);
   for (const element of $("table").toArray()) {
     const rows = expandTableRows($, $(element));
