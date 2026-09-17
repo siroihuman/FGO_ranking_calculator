@@ -2,6 +2,7 @@ import type { ServantStatusRecord } from "../types/servant.js";
 import { parseCommandCardCounts } from "./cardDeckParser.js";
 import { parseHiddenStatusPage } from "./hiddenStatusParser.js";
 import { parseNoblePhantasmPage } from "./noblePhantasmParser.js";
+import { parseSkillDataPage } from "./skillParser.js";
 import {
   parseServantStatusPage,
   type StatusPageIdentity,
@@ -14,6 +15,7 @@ export function parseServantCompleteStatusPage(
   const base = parseServantStatusPage(html, identity);
   const hidden = parseHiddenStatusPage(html);
   const cards = parseCommandCardCounts(html);
+  const { skills, classSkills } = parseSkillDataPage(html);
   let noblePhantasm: ServantStatusRecord["noblePhantasm"];
   try {
     noblePhantasm = parseNoblePhantasmPage(html, hidden?.noblePhantasmHits);
@@ -26,5 +28,7 @@ export function parseServantCompleteStatusPage(
     ...(hidden ? { hidden } : {}),
     cards,
     ...(noblePhantasm ? { noblePhantasm } : {}),
+    ...(skills.length > 0 ? { skills } : {}),
+    ...(classSkills.length > 0 ? { classSkills } : {}),
   };
 }
