@@ -5,6 +5,12 @@ import type {
 } from "./actionSimulator.js";
 import { simulateSystemActionPlan } from "./actionSimulator.js";
 import type { SystemPreset } from "./presets.js";
+import {
+  loadoutInitialNpBonus,
+  loadoutSkillReloadingUses,
+  mysticCodeTimelineAction,
+  type SystemLoadout,
+} from "./systemLoadout.js";
 
 export interface SystemOptimizationOptions {
   initialNp: number;
@@ -12,6 +18,7 @@ export interface SystemOptimizationOptions {
   actions: readonly SystemActionDefinition[];
   postNoblePhantasmNpByWave?: readonly [number, number, number];
   maxUsesPerActionPerWave?: number;
+  skillReloadingUses?: number;
 }
 
 export interface SystemOptimizationResult {
@@ -29,6 +36,8 @@ interface SearchState {
   conditionalUses: number;
   probabilisticUses: number;
   actionUses: number;
+  skillReloadingRemaining: number;
+  reloadedActionIds: Set<string>;
 }
 
 interface Candidate {
@@ -38,6 +47,10 @@ interface Candidate {
 
 function cloneMap(map: ReadonlyMap<string, number>): Map<string, number> {
   return new Map(map.entries());
+}
+
+function cloneSet(set: ReadonlySet<string>): Set<string> {
+  return new Set(set.values());
 }
 
 function maxUses(action: SystemActionDefinition): number {
@@ -71,11 +84,22 @@ function useAction(
     conditionalUses: state.conditionalUses + (action.conditional ? 1 : 0),
     probabilisticUses: state.probabilisticUses + (action.probabilistic ? 1 : 0),
     actionUses: state.actionUses + 1,
+    reloadedActionIds: cloneSet(state.reloadedActionIds),
   };
 
   next.plan[state.waveIndex].push(action.id);
   next.totalUses.set(action.id, (next.totalUses.get(action.id) ?? 0) + 1);
   next.cooldowns.set(action.id, action.cooldownTurns ?? 0);
+
+  if (
+    action.skillReloadingEligible
+    && next.skillReloadingRemaining > 0
+    && !next.reloadedActionIds.has(action.id)
+  ) {
+    next.cooldowns.set(action.id, Math.max(0, (next.cooldowns.get(action.id) ?? 0) - 1));
+    next.skillReloadingRemaining -= 1;
+    next.reloadedActionIds.add(action.id);
+  }
 
   if (action.cooldownReduction) {
     for (const target of actionMap.values()) {
@@ -94,12 +118,15 @@ function tickCooldowns(cooldowns: ReadonlyMap<string, number>): Map<string, numb
 function stateKey(state: SearchState): string {
   const cooldowns = [...state.cooldowns].sort(([a], [b]) => a.localeCompare(b));
   const uses = [...state.totalUses].sort(([a], [b]) => a.localeCompare(b));
+  const reloaded = [...state.reloadedActionIds].sort();
   return JSON.stringify([
     state.waveIndex,
     Math.round(state.np * 1_000_000) / 1_000_000,
     cooldowns,
     uses,
     state.plan[state.waveIndex],
+    state.skillReloadingRemaining,
+    reloaded,
   ]);
 }
 
@@ -141,6 +168,7 @@ export function optimizeThreeWaveSystem(
           actions: options.actions,
           actionsByWave: state.plan,
           ...(options.postNoblePhantasmNpByWave ? { postNoblePhantasmNpByWave: options.postNoblePhantasmNpByWave } : {}),
+          skillReloadingUses: options.skillReloadingUses ?? 0,
         });
         if (simulation.established) best = betterCandidate(best, { state, simulation });
       } else {
@@ -152,6 +180,7 @@ export function optimizeThreeWaveSystem(
           np: nextNp,
           cooldowns: tickCooldowns(state.cooldowns),
           plan: state.plan.map((entries) => [...entries]) as [string[], string[], string[]],
+          reloadedActionIds: cloneSet(state.reloadedActionIds),
         }, new Map());
       }
     }
@@ -177,6 +206,8 @@ export function optimizeThreeWaveSystem(
     conditionalUses: 0,
     probabilisticUses: 0,
     actionUses: 0,
+    skillReloadingRemaining: options.skillReloadingUses ?? 0,
+    reloadedActionIds: new Set(),
   }, new Map());
 
   if (!best) return { established: false };
@@ -193,16 +224,25 @@ function combinePostNp(
 
 export function optimizePresetSystem(
   preset: SystemPreset,
-  options: Omit<SystemOptimizationOptions, "initialNp" | "actions"> & {
+  options: Omit<SystemOptimizationOptions, "initialNp" | "actions" | "skillReloadingUses"> & {
     attackerActions?: readonly SystemActionDefinition[];
+    loadout?: SystemLoadout;
+    /** Override the preset's already-prepared Wave1 gauge, e.g. 0 for Black Grail setup checks. */
+    initialNpOverride?: number;
   },
 ): SystemOptimizationResult {
   const postNp = combinePostNp(preset.postNoblePhantasmNpByWave, options.postNoblePhantasmNpByWave);
+  const mysticCode = mysticCodeTimelineAction(options.loadout?.mysticCode);
   return optimizeThreeWaveSystem({
-    initialNp: preset.initialNp,
+    initialNp: (options.initialNpOverride ?? preset.initialNp) + loadoutInitialNpBonus(options.loadout),
     refundByWave: options.refundByWave,
-    actions: [...preset.actions, ...(options.attackerActions ?? [])],
+    actions: [
+      ...preset.actions,
+      ...(options.attackerActions ?? []),
+      ...(mysticCode ? [mysticCode.action] : []),
+    ],
     ...(postNp ? { postNoblePhantasmNpByWave: postNp } : {}),
     ...(options.maxUsesPerActionPerWave !== undefined ? { maxUsesPerActionPerWave: options.maxUsesPerActionPerWave } : {}),
+    skillReloadingUses: loadoutSkillReloadingUses(options.loadout),
   });
 }
