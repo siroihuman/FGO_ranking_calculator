@@ -1,5 +1,8 @@
-import type { ServantSource } from "../types/servant.js";
-import type { CommandCardCounts } from "../parsers/cardDeckParser.js";
+import type {
+  ServantCommandCardCounts,
+  ServantSource,
+  ServantStatusRecord,
+} from "../types/servant.js";
 import {
   calculateNormalCardNp,
   npUnitsToPercent,
@@ -19,7 +22,7 @@ export interface NpRankingServant {
   artsHits?: number;
   busterHits?: number;
   extraHits?: number;
-  cards: CommandCardCounts;
+  cards: ServantCommandCardCounts;
 }
 
 export interface NpRankingOptions {
@@ -37,6 +40,28 @@ export interface NpRankingEntry extends NpRankingServant {
   npUnits: number;
   npPercent: number;
   hits: number;
+}
+
+export function npRankingServantsFromStatus(
+  records: readonly ServantStatusRecord[],
+): NpRankingServant[] {
+  return records.flatMap((record) => {
+    const hidden = record.hidden;
+    if (!hidden || hidden.npGainRate === undefined || !record.cards) return [];
+    return [{
+      id: record.id,
+      source: record.source,
+      pageUrl: record.pageUrl,
+      no: record.no,
+      name: record.name,
+      npGainRate: hidden.npGainRate,
+      quickHits: hidden.quickHits,
+      artsHits: hidden.artsHits,
+      busterHits: hidden.busterHits,
+      extraHits: hidden.extraHits,
+      cards: record.cards,
+    }];
+  });
 }
 
 function hitsFor(servant: NpRankingServant, cardType: NormalCardType): number | undefined {
