@@ -97,6 +97,27 @@ describe("system loadout definitions", () => {
     expect(result.actionsByWave?.[0]).toContain("mystic-mage-association-s2");
   });
 
+  it("uses Atlas Academy cooldown reduction to enable wave-3 skill reuse", () => {
+    const attackerAction = {
+      id: "attacker-s1",
+      label: "Attacker S1",
+      owner: "attacker",
+      cooldownTurns: 4,
+      maxUses: 2,
+      npGrant: 50,
+      skillReloadingEligible: true,
+    } as const;
+    const result = optimizePresetSystem(simplePreset, {
+      initialNpOverride: 50,
+      refundByWave: [100, 50, 0],
+      attackerActions: [attackerAction],
+      loadout: { mysticCode: "atlas-academy-uniform" },
+    });
+    expect(result.established).toBe(true);
+    expect(result.actionsByWave?.[1]).toContain("mystic-atlas-s3");
+    expect(result.actionsByWave?.[2]).toContain("attacker-s1");
+  });
+
   it("applies Black Grail to system damage", () => {
     const servant = damageServant();
     const [plain] = buildSystemDamageRanking([servant], simplePreset, {
