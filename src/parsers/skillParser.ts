@@ -72,7 +72,9 @@ function lastNumericAfter(row: string[], index: number): number | undefined {
 function ctBeforeEffect(row: string[], index: number): number | undefined {
   const values = row.slice(0, index)
     .map(parseNumber)
-    .filter((value): value is number => Number.isInteger(value) && value > 0 && value <= 20);
+    .filter((value): value is number =>
+      value !== undefined && Number.isInteger(value) && value > 0 && value <= 20,
+    );
   return values.at(-1);
 }
 
@@ -137,7 +139,11 @@ function parseServantSkills($: CheerioAPI): ServantSkillData[] {
         const table = firstTableAfter($, cursor[0]);
         if (table) {
           const parsed = parseEffects(expandTableRows($, table));
-          skills.push({ ...heading, ...(parsed.ct !== undefined ? { ct: parsed.ct } : {}), effects: parsed.effects });
+          skills.push({
+            ...heading,
+            ...(parsed.ct !== undefined ? { ct: parsed.ct } : {}),
+            effects: parsed.effects,
+          });
         }
       }
     }
