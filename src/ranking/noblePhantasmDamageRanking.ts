@@ -1,4 +1,9 @@
 import { calculateDamage } from "../formulas/damage.js";
+import {
+  resolveRankingModifierTotals,
+  type OverchargeStage,
+} from "../effects/rankingModifiers.js";
+import type { NormalizedRankingEffect } from "../effects/types.js";
 import type { CommandCardType, ServantClass, ServantSource, ServantStatusRecord } from "../types/servant.js";
 import type { FouBonus, StatusLevel } from "./statusRanking.js";
 
@@ -36,6 +41,9 @@ export interface NoblePhantasmDamageRankingOptions {
   noblePhantasmLevel?: NoblePhantasmLevel;
   cardType?: CommandCardType | "all";
   targetScope?: "single" | "all" | "all_scopes";
+  skills?: boolean;
+  conditionalEffects?: boolean;
+  overchargeStage?: OverchargeStage;
 }
 
 export interface NoblePhantasmDamageRankingEntry {
@@ -45,36 +53,14 @@ export interface NoblePhantasmDamageRankingEntry {
   averageDamage: number;
   maximumDamage: number;
   attack: number;
+  usesProbabilisticEffect: boolean;
+  appliedEffects: NormalizedRankingEffect[];
 }
 
 function attackAtLevel(servant: ServantStatusRecord, level: StatusLevel): number | null {
   if (level === "max") return servant.status.atkMax;
   if (level === 100) return servant.status.atk100 ?? null;
   return servant.status.atk120 ?? null;
-}
-
-function damageAtRandom(
-  servant: ServantStatusRecord,
-  attack: number,
-  npLevel: NoblePhantasmLevel,
-  randomModifierPermille: number,
-): number | null {
-  const np = servant.noblePhantasm;
-  const multiplier = np?.damageMultiplierPermilleByLevel?.[npLevel - 1];
-  if (!np || np.targetScope === "support" || multiplier === undefined) return null;
-  return calculateDamage({
-    attack,
-    isNoblePhantasm: true,
-    npDamageMultiplierPermille: multiplier,
-    cardDamageValuePermille: NP_CARD_DAMAGE_VALUE_PERMILLE[np.cardType],
-    firstCardBonusPermille: 0,
-    classAttackCoefficientPermille: CLASS_ATTACK_COEFFICIENT_PERMILLE[servant.className],
-    classAffinityPermille: 1000,
-    attributeAffinityPermille: 1000,
-    randomModifierPermille,
-    extraCardModifierPermille: 1000,
-    npSpecialAttackPermille: 1000,
-  }).damage;
 }
 
 export function buildNoblePhantasmDamageRanking(
@@ -94,14 +80,40 @@ export function buildNoblePhantasmDamageRanking(
     if (!np || np.targetScope === "support") return [];
     if (cardType !== "all" && np.cardType !== cardType) return [];
     if (targetScope !== "all_scopes" && np.targetScope !== targetScope) return [];
+    const multiplier = np.damageMultiplierPermilleByLevel?.[npLevel - 1];
+    if (multiplier === undefined) return [];
     const baseAttack = attackAtLevel(servant, level);
     if (baseAttack === null) return [];
     const attack = baseAttack + fou;
+    const modifiers = resolveRankingModifierTotals(servant, {
+      includeSkills: options.skills ?? false,
+      includeConditionalEffects: options.conditionalEffects ?? false,
+      cardType: np.cardType,
+      noblePhantasm: true,
+      overchargeStage: options.overchargeStage ?? 1,
+      includeNoblePhantasmPreAttackEffects: true,
+    });
     const damages: number[] = [];
     for (let random = 900; random <= 1099; random += 1) {
-      const damage = damageAtRandom(servant, attack, npLevel, random);
-      if (damage === null) return [];
-      damages.push(damage);
+      damages.push(calculateDamage({
+        attack,
+        isNoblePhantasm: true,
+        npDamageMultiplierPermille: multiplier,
+        cardDamageValuePermille: NP_CARD_DAMAGE_VALUE_PERMILLE[np.cardType],
+        cardPerformanceModPermille: modifiers.cardPerformanceModPermille,
+        cardResistancePermille: modifiers.cardResistancePermille,
+        firstCardBonusPermille: 0,
+        classAttackCoefficientPermille: CLASS_ATTACK_COEFFICIENT_PERMILLE[servant.className],
+        classAffinityPermille: 1000,
+        attributeAffinityPermille: 1000,
+        randomModifierPermille: random,
+        attackModPermille: modifiers.attackModPermille,
+        defenseModPermille: modifiers.defenseModPermille,
+        npDamageModPermille: modifiers.npDamageModPermille,
+        fixedDamage: modifiers.fixedDamage,
+        extraCardModifierPermille: 1000,
+        npSpecialAttackPermille: 1000,
+      }).damage);
     }
     const total = damages.reduce((sum, damage) => sum + damage, 0);
     return [{
@@ -110,6 +122,8 @@ export function buildNoblePhantasmDamageRanking(
       minimumDamage: damages[0],
       averageDamage: total / damages.length,
       maximumDamage: damages[damages.length - 1],
+      usesProbabilisticEffect: modifiers.usesProbabilisticEffect,
+      appliedEffects: modifiers.appliedEffects,
     }];
   });
 
