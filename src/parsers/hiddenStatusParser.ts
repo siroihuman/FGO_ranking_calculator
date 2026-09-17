@@ -17,22 +17,32 @@ function parseHits(value: string): number | undefined {
   return Number.isSafeInteger(parsed) ? parsed : undefined;
 }
 
-function valueAfterLabel(row: string[], labels: readonly RegExp[]): string | undefined {
+function valuesAfterLabel(row: string[], labels: readonly RegExp[]): string[] {
+  const values: string[] = [];
   for (let index = 0; index < row.length; index += 1) {
     const cell = normalizeCellText(row[index]);
     if (!labels.some((pattern) => pattern.test(cell))) continue;
     for (let cursor = index + 1; cursor < row.length; cursor += 1) {
       const candidate = normalizeCellText(row[cursor]);
-      if (candidate) return candidate;
+      if (candidate) {
+        values.push(candidate);
+        break;
+      }
     }
   }
-  return undefined;
+  return values;
 }
 
-function firstValue(rows: string[][], labels: readonly RegExp[]): string | undefined {
+function firstParsedValue<T>(
+  rows: string[][],
+  labels: readonly RegExp[],
+  parser: (value: string) => T | undefined,
+): T | undefined {
   for (const row of rows) {
-    const value = valueAfterLabel(row, labels);
-    if (value !== undefined) return value;
+    for (const value of valuesAfterLabel(row, labels)) {
+      const parsed = parser(value);
+      if (parsed !== undefined) return parsed;
+    }
   }
   return undefined;
 }
@@ -47,14 +57,14 @@ export function parseHiddenStatusPage(html: string): ServantHiddenStatusValues |
   if (rows.length === 0) return undefined;
 
   const result: ServantHiddenStatusValues = {
-    npGainRate: parseDecimal(firstValue(rows, [/^N\/A$/i]) ?? ""),
-    defenseNpRate: parseDecimal(firstValue(rows, [/^N\/D$/i]) ?? ""),
-    starRate: parseDecimal(firstValue(rows, [/スター発生率/, /^SR$/i]) ?? ""),
-    quickHits: parseHits(firstValue(rows, [/^Quick$/i, /^Q$/i]) ?? ""),
-    artsHits: parseHits(firstValue(rows, [/^Arts$/i, /^A$/i]) ?? ""),
-    busterHits: parseHits(firstValue(rows, [/^Buster$/i, /^B$/i]) ?? ""),
-    extraHits: parseHits(firstValue(rows, [/^Extra$/i, /^EX$/i]) ?? ""),
-    noblePhantasmHits: parseHits(firstValue(rows, [/^宝具$/, /宝具.*Hit/i]) ?? ""),
+    npGainRate: firstParsedValue(rows, [/^N\/A$/i], parseDecimal),
+    defenseNpRate: firstParsedValue(rows, [/^N\/D$/i], parseDecimal),
+    starRate: firstParsedValue(rows, [/スター発生率/, /^SR$/i], parseDecimal),
+    quickHits: firstParsedValue(rows, [/^Quick$/i, /^Q$/i], parseHits),
+    artsHits: firstParsedValue(rows, [/^Arts$/i, /^A$/i], parseHits),
+    busterHits: firstParsedValue(rows, [/^Buster$/i, /^B$/i], parseHits),
+    extraHits: firstParsedValue(rows, [/^Extra$/i, /^EX$/i], parseHits),
+    noblePhantasmHits: firstParsedValue(rows, [/^宝具$/, /宝具.*Hit/i], parseHits),
   };
 
   return Object.values(result).some((value) => value !== undefined) ? result : undefined;
