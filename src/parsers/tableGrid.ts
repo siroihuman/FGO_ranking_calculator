@@ -6,7 +6,7 @@ export function normalizeCellText(value: string): string {
 
 export function expandTableRow($: CheerioAPI, row: Cheerio<any>): string[] {
   const cells: string[] = [];
-  row.find(":scope > th, :scope > td").each((_, cell) => {
+  row.children("th, td").each((_, cell) => {
     const element = $(cell);
     const text = normalizeCellText(element.text());
     const rawColspan = Number.parseInt(element.attr("colspan") ?? "1", 10);
