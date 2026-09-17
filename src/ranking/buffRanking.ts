@@ -144,6 +144,7 @@ export function buildBuffRanking(
     const effects = activeRankingEffects(servant, {
       includeSkills: true,
       includeConditionalEffects: options.conditionalEffects ?? false,
+      includeAllCardTypes: true,
     }).filter((effect) =>
       INCLUDED_TYPES.has(effect.type)
       && !effect.isSpecialAttack
