@@ -1,6 +1,12 @@
-import type { SystemActionDefinition } from "./actionSimulator.js";
+import type { SystemActionDefinition, SystemWave } from "./actionSimulator.js";
 import { simulateSystemActionPlan } from "./actionSimulator.js";
 import type { SystemPreset } from "./presets.js";
+import {
+  loadoutInitialNpBonus,
+  loadoutSkillReloadingUses,
+  mysticCodeTimelineAction,
+  type SystemLoadout,
+} from "./systemLoadout.js";
 
 export interface SimulatePresetSystemOptions {
   refundByWave: readonly [number, number, number];
@@ -9,16 +15,23 @@ export interface SimulatePresetSystemOptions {
   /** Full ordered plan override when same-wave action order matters. */
   actionsByWave?: readonly [readonly string[], readonly string[], readonly string[]];
   postNoblePhantasmNpByWave?: readonly [number, number, number];
+  loadout?: SystemLoadout;
+  /** Override the preset's already-prepared Wave1 gauge before Mana Loading. */
+  initialNpOverride?: number;
+  /** Explicit Mystic Code usage wave for non-optimized simulation. */
+  mysticCodeWave?: SystemWave;
 }
 
 function mergedPlan(
   preset: SystemPreset,
   attackerPlan: readonly [readonly string[], readonly string[], readonly string[]] | undefined,
+  mysticActionId: string | undefined,
+  mysticWave: SystemWave | undefined,
 ): readonly [readonly string[], readonly string[], readonly string[]] {
-  if (!attackerPlan) return preset.defaultActionsByWave;
   return [0, 1, 2].map((index) => [
     ...preset.defaultActionsByWave[index],
-    ...attackerPlan[index],
+    ...(mysticActionId && mysticWave === index + 1 ? [mysticActionId] : []),
+    ...(attackerPlan?.[index] ?? []),
   ]) as unknown as readonly [readonly string[], readonly string[], readonly string[]];
 }
 
@@ -36,19 +49,31 @@ export function simulatePresetSystem(
   options: SimulatePresetSystemOptions,
 ) {
   const attackerActions = options.attackerActions ?? [];
-  const actions = [...preset.actions, ...attackerActions];
+  const mystic = mysticCodeTimelineAction(options.loadout?.mysticCode);
+  const actions = [
+    ...preset.actions,
+    ...attackerActions,
+    ...(mystic ? [mystic.action] : []),
+  ];
   const actionsByWave = options.actionsByWave
-    ?? mergedPlan(preset, options.attackerActionsByWave);
+    ?? mergedPlan(
+      preset,
+      options.attackerActionsByWave,
+      mystic?.action.id,
+      options.mysticCodeWave,
+    );
   const postNp = mergedPostNp(
     preset.postNoblePhantasmNpByWave,
     options.postNoblePhantasmNpByWave,
   );
 
   return simulateSystemActionPlan({
-    initialNp: preset.initialNp,
+    initialNp: (options.initialNpOverride ?? preset.initialNp)
+      + loadoutInitialNpBonus(options.loadout),
     refundByWave: options.refundByWave,
     actions,
     actionsByWave,
     ...(postNp ? { postNoblePhantasmNpByWave: postNp } : {}),
+    skillReloadingUses: loadoutSkillReloadingUses(options.loadout),
   });
 }
