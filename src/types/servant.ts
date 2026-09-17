@@ -18,6 +18,8 @@ export type ServantClass =
   | "Beast"
   | "Other";
 
+export type CommandCardType = "buster" | "arts" | "quick";
+
 export interface ServantStatusValues {
   maxLevel: number;
   hpMax: number;
@@ -48,6 +50,21 @@ export interface ServantCommandCardCounts {
   buster: number;
 }
 
+export interface NoblePhantasmEffectRow {
+  rawText: string;
+  values: number[];
+  phase: "before_attack" | "attack" | "after_attack";
+}
+
+export interface NoblePhantasmData {
+  name?: string;
+  cardType: CommandCardType;
+  targetScope: "single" | "all" | "support";
+  hitCount?: number;
+  damageMultiplierPermilleByLevel?: [number, number, number, number, number];
+  effectRows: NoblePhantasmEffectRow[];
+}
+
 export interface ServantStatusRecord {
   id: string;
   source: ServantSource;
@@ -60,4 +77,5 @@ export interface ServantStatusRecord {
   status: ServantStatusValues;
   hidden?: ServantHiddenStatusValues;
   cards?: ServantCommandCardCounts;
+  noblePhantasm?: NoblePhantasmData;
 }
