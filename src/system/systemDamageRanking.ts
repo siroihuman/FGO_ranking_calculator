@@ -17,11 +17,16 @@ import type { SystemPreset } from "./presets.js";
 import {
   resolveSystemModifiers,
   systemOverchargeStage,
+  type ResolvedSystemModifiers,
 } from "./supportModifiers.js";
 import {
   enumerateAttackerSkillTimelines,
   type AttackerSkillTimeline,
 } from "./attackerSkillTimeline.js";
+import {
+  loadoutPassiveModifiers,
+  type SystemLoadout,
+} from "./systemLoadout.js";
 
 const NP_CARD_DAMAGE_VALUE_PERMILLE: Record<CommandCardType, number> = {
   buster: 1500,
@@ -62,6 +67,7 @@ export interface SystemDamageRankingOptions {
   conditionalEffects?: boolean;
   overchargeStage?: OverchargeStage;
   sortBy?: SystemDamageSort;
+  loadout?: SystemLoadout;
 }
 
 export interface SystemDamageWaveResult {
@@ -133,11 +139,22 @@ function modifierTotalsForWave(
   });
 }
 
+function withLoadoutNpDamage(
+  modifiers: ResolvedSystemModifiers,
+  loadout: SystemLoadout | undefined,
+): ResolvedSystemModifiers {
+  const passive = loadoutPassiveModifiers(loadout);
+  return {
+    ...modifiers,
+    npDamageModPermille: modifiers.npDamageModPermille + passive.npDamageModPermille,
+  };
+}
+
 function oneDamage(
   servant: ServantStatusRecord,
   attack: number,
   multiplier: number,
-  modifiers: ReturnType<typeof resolveSystemModifiers>,
+  modifiers: ResolvedSystemModifiers,
   randomModifierPermille: number,
 ): number {
   const np = servant.noblePhantasm!;
@@ -171,6 +188,7 @@ function proxyTimelineScore(
   conditionalEffects: boolean,
   sortBy: SystemDamageSort,
   timeline: AttackerSkillTimeline | undefined,
+  loadout: SystemLoadout | undefined,
 ): number {
   const waveValues = [0, 1, 2].map((waveIndex) => {
     const support = preset.supportModifiersByWave?.[waveIndex];
@@ -187,7 +205,7 @@ function proxyTimelineScore(
       servant,
       attack,
       multiplier,
-      resolveSystemModifiers(attacker, support),
+      withLoadoutNpDamage(resolveSystemModifiers(attacker, support), loadout),
       1000,
     );
   });
@@ -228,6 +246,7 @@ export function buildSystemDamageRanking(
   const baseOc = options.overchargeStage ?? 1;
   const sortBy = options.sortBy ?? "total";
   const conditionalEffects = options.conditionalEffects ?? false;
+  const loadoutPassive = loadoutPassiveModifiers(options.loadout);
 
   const rows = servants.flatMap((servant) => {
     if (source !== "all" && servant.source !== source) return [];
@@ -238,14 +257,18 @@ export function buildSystemDamageRanking(
     const npLevel = resolvedNpLevel(servant, npLevelOption, welfare);
     const multiplier = np.damageMultiplierPermilleByLevel?.[npLevel - 1];
     if (multiplier === undefined) return [];
-    const attack = baseAttack + fou;
+    const attack = baseAttack + fou + loadoutPassive.attackBonus;
 
     let selectedTimeline: AttackerSkillTimeline | undefined;
-    if (options.includeAttackerSkills) {
+    const needsTimeline = Boolean(options.includeAttackerSkills)
+      || (options.loadout?.mysticCode !== undefined && options.loadout.mysticCode !== "none");
+    if (needsTimeline) {
       let selectedScore = Number.NEGATIVE_INFINITY;
       for (const timeline of enumerateAttackerSkillTimelines(servant, preset, {
         cardType: preset.cardType,
         conditionalEffects,
+        includeAttackerSkills: options.includeAttackerSkills ?? false,
+        loadout: options.loadout,
       })) {
         const score = proxyTimelineScore(
           servant,
@@ -256,6 +279,7 @@ export function buildSystemDamageRanking(
           conditionalEffects,
           sortBy,
           timeline,
+          options.loadout,
         );
         if (betterTimeline(selectedTimeline, timeline, selectedScore, score)) {
           selectedTimeline = timeline;
@@ -277,7 +301,10 @@ export function buildSystemDamageRanking(
         waveIndex,
       );
       usesProbabilisticEffect ||= attackerModifiers.usesProbabilisticEffect;
-      const modifiers = resolveSystemModifiers(attackerModifiers, support);
+      const modifiers = withLoadoutNpDamage(
+        resolveSystemModifiers(attackerModifiers, support),
+        options.loadout,
+      );
       const damages: number[] = [];
       for (let random = 900; random <= 1099; random += 1) {
         damages.push(oneDamage(servant, attack, multiplier, modifiers, random));
