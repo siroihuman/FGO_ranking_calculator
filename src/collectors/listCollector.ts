@@ -79,10 +79,11 @@ export function parseOfficialServantList(
   baseUrl = "https://w.atwiki.jp/f_go/pages/671.html",
 ): ServantPageLink[] {
   const $ = load(html);
-  let bestTable: ReturnType<typeof $> | null = null;
+  const tables = $("table").toArray();
+  let bestTableIndex = -1;
   let bestCount = 0;
 
-  $("table").each((_, table) => {
+  tables.forEach((table, tableIndex) => {
     const current = $(table);
     const text = normalizeCellText(current.text());
     if (
@@ -96,7 +97,7 @@ export function parseOfficialServantList(
     }
 
     const pageIds = new Set<string>();
-    current.find("a[href]").each((__, anchor) => {
+    current.find("a[href]").each((_, anchor) => {
       const element = $(anchor);
       const parsed = normalizePageLink(
         "official",
@@ -108,15 +109,16 @@ export function parseOfficialServantList(
     });
 
     if (pageIds.size > bestCount) {
-      bestTable = current;
+      bestTableIndex = tableIndex;
       bestCount = pageIds.size;
     }
   });
 
-  if (!bestTable || bestCount === 0) {
+  if (bestTableIndex < 0 || bestCount === 0) {
     throw new Error("official servant list table not found");
   }
 
+  const bestTable = $(tables[bestTableIndex]);
   const links: ServantPageLink[] = [];
   bestTable.find("a[href]").each((_, anchor) => {
     const element = $(anchor);
