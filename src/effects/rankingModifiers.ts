@@ -33,7 +33,9 @@ export interface RankingModifierTotals {
   appliedEffects: NormalizedRankingEffect[];
 }
 
-function currentSkills(skills: readonly ServantSkillData[] | undefined): ServantSkillData[] {
+export function currentRankingSkills(
+  skills: readonly ServantSkillData[] | undefined,
+): ServantSkillData[] {
   if (!skills) return [];
   return ([1, 2, 3] as const).flatMap((slot) => {
     const matches = skills.filter((skill) => skill.slot === slot);
@@ -99,7 +101,7 @@ export function activeRankingEffects(
   const effects: NormalizedRankingEffect[] = [];
   servant.classSkills?.forEach((skill) => effects.push(...skill.effects));
   if (options.includeSkills) {
-    currentSkills(servant.skills).forEach((skill) => effects.push(...skill.effects));
+    currentRankingSkills(servant.skills).forEach((skill) => effects.push(...skill.effects));
   }
   if (options.includeNoblePhantasmPreAttackEffects && options.noblePhantasm) {
     effects.push(...noblePhantasmPreAttackEffects(servant, options.overchargeStage ?? 1));
@@ -107,11 +109,12 @@ export function activeRankingEffects(
   return effects.filter((effect) => allowedEffect(effect, options));
 }
 
-export function resolveRankingModifierTotals(
-  servant: ServantStatusRecord,
+/** Resolves already-selected effects into the same modifier buckets used by rankings. */
+export function resolveEffectModifierTotals(
+  effects: readonly NormalizedRankingEffect[],
   options: RankingModifierOptions = {},
 ): RankingModifierTotals {
-  const effects = activeRankingEffects(servant, options);
+  const appliedEffects = effects.filter((effect) => allowedEffect(effect, options));
   const totals: RankingModifierTotals = {
     attackModPermille: 0,
     defenseModPermille: 0,
@@ -122,10 +125,10 @@ export function resolveRankingModifierTotals(
     starGenerationModPermille: 0,
     fixedDamage: 0,
     usesProbabilisticEffect: false,
-    appliedEffects: effects,
+    appliedEffects,
   };
 
-  for (const effect of effects) {
+  for (const effect of appliedEffects) {
     totals.usesProbabilisticEffect ||= effect.probabilistic;
     if (effect.type === "attack" && sourceTarget(effect)) {
       totals.attackModPermille += percentToPermille(effect.value);
@@ -146,4 +149,11 @@ export function resolveRankingModifierTotals(
     }
   }
   return totals;
+}
+
+export function resolveRankingModifierTotals(
+  servant: ServantStatusRecord,
+  options: RankingModifierOptions = {},
+): RankingModifierTotals {
+  return resolveEffectModifierTotals(activeRankingEffects(servant, options), options);
 }
