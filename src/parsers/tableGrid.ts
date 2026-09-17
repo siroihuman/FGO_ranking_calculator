@@ -1,13 +1,13 @@
-import type { Cheerio, Element } from "cheerio";
+import type { Cheerio, CheerioAPI } from "cheerio";
 
 export function normalizeCellText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
-export function expandTableRow(row: Cheerio<Element>): string[] {
+export function expandTableRow($: CheerioAPI, row: Cheerio<any>): string[] {
   const cells: string[] = [];
   row.find(":scope > th, :scope > td").each((_, cell) => {
-    const element = row._make(cell);
+    const element = $(cell);
     const text = normalizeCellText(element.text());
     const rawColspan = Number.parseInt(element.attr("colspan") ?? "1", 10);
     const colspan = Number.isFinite(rawColspan) && rawColspan > 0 ? rawColspan : 1;
@@ -18,10 +18,10 @@ export function expandTableRow(row: Cheerio<Element>): string[] {
   return cells;
 }
 
-export function expandTableRows(table: Cheerio<Element>): string[][] {
+export function expandTableRows($: CheerioAPI, table: Cheerio<any>): string[][] {
   const rows: string[][] = [];
   table.find("tr").each((_, row) => {
-    const expanded = expandTableRow(table._make(row));
+    const expanded = expandTableRow($, $(row));
     if (expanded.length > 0) rows.push(expanded);
   });
   return rows;
