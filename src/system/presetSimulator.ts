@@ -6,10 +6,7 @@ export interface SimulatePresetSystemOptions {
   refundByWave: readonly [number, number, number];
   attackerActions?: readonly SystemActionDefinition[];
   attackerActionsByWave?: readonly [readonly string[], readonly string[], readonly string[]];
-  /**
-   * Full ordered plan override. Use this when cooldown reduction and attacker
-   * skill order within the same wave matters.
-   */
+  /** Full ordered plan override when same-wave action order matters. */
   actionsByWave?: readonly [readonly string[], readonly string[], readonly string[]];
   postNoblePhantasmNpByWave?: readonly [number, number, number];
 }
@@ -25,11 +22,15 @@ function mergedPlan(
   ]) as unknown as readonly [readonly string[], readonly string[], readonly string[]];
 }
 
-/**
- * Simulates the NP/CT portion of one registered system preset. Support actions
- * from the preset and parsed attacker NP-charge actions share the same runtime,
- * allowing support cooldown reduction to make attacker skills reusable.
- */
+function mergedPostNp(
+  preset: readonly [number, number, number] | undefined,
+  extra: readonly [number, number, number] | undefined,
+): readonly [number, number, number] | undefined {
+  if (!preset && !extra) return undefined;
+  return [0, 1, 2].map((index) => (preset?.[index] ?? 0) + (extra?.[index] ?? 0)) as [number, number, number];
+}
+
+/** Simulates the NP/CT portion of one registered system preset. */
 export function simulatePresetSystem(
   preset: SystemPreset,
   options: SimulatePresetSystemOptions,
@@ -38,14 +39,16 @@ export function simulatePresetSystem(
   const actions = [...preset.actions, ...attackerActions];
   const actionsByWave = options.actionsByWave
     ?? mergedPlan(preset, options.attackerActionsByWave);
+  const postNp = mergedPostNp(
+    preset.postNoblePhantasmNpByWave,
+    options.postNoblePhantasmNpByWave,
+  );
 
   return simulateSystemActionPlan({
     initialNp: preset.initialNp,
     refundByWave: options.refundByWave,
     actions,
     actionsByWave,
-    ...(options.postNoblePhantasmNpByWave
-      ? { postNoblePhantasmNpByWave: options.postNoblePhantasmNpByWave }
-      : {}),
+    ...(postNp ? { postNoblePhantasmNpByWave: postNp } : {}),
   });
 }
