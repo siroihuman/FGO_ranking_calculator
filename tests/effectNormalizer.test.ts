@@ -45,4 +45,13 @@ describe("normalizeRankingEffect", () => {
       activationRatePercent: 80,
     });
   });
+
+  it("does not treat OC scaling annotations as activation conditions", () => {
+    const effect = normalizeRankingEffect(
+      "自身の宝具威力をアップ(3T)<OC:効果UP>",
+      20,
+    );
+    expect(effect.type).toBe("noble_phantasm_damage");
+    expect(effect.conditionText).toBeUndefined();
+  });
 });
