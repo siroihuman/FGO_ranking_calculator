@@ -16,6 +16,7 @@ import {
   enumerateAttackerSkillTimelines,
   type AttackerSkillTimeline,
 } from "./attackerSkillTimeline.js";
+import type { SystemLoadout } from "./systemLoadout.js";
 
 export type SystemRefundSort = "wave1" | "wave2" | "wave3" | "total";
 
@@ -29,6 +30,7 @@ export interface SystemRefundRankingOptions {
   conditionalEffects?: boolean;
   overchargeStage?: OverchargeStage;
   sortBy?: SystemRefundSort;
+  loadout?: SystemLoadout;
 }
 
 export interface SystemRefundWaveResult {
@@ -164,11 +166,15 @@ export function buildSystemRefundRanking(
 
     let selectedTimeline: AttackerSkillTimeline | undefined;
     let selectedUnits: [number, number, number] | undefined;
-    if (options.includeAttackerSkills) {
+    const needsTimeline = Boolean(options.includeAttackerSkills)
+      || (options.loadout?.mysticCode !== undefined && options.loadout.mysticCode !== "none");
+    if (needsTimeline) {
       let selectedScore = Number.NEGATIVE_INFINITY;
       for (const timeline of enumerateAttackerSkillTimelines(servant, preset, {
         cardType: preset.cardType,
         conditionalEffects,
+        includeAttackerSkills: options.includeAttackerSkills ?? false,
+        loadout: options.loadout,
       })) {
         const units = timelineRefundUnits(servant, preset, timeline, {
           targetNpRatePermille: targetNpRate,
