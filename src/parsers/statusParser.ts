@@ -63,10 +63,11 @@ function valueAfterLabel(cells: string[], label: string): string | undefined {
 
 function findBasicTable(html: string) {
   const $ = load(html);
-  let best: ReturnType<typeof $> | null = null;
+  const tables = $("table").toArray();
+  let bestTableIndex = -1;
   let bestScore = 0;
 
-  $("table").each((_, element) => {
+  tables.forEach((element, tableIndex) => {
     const table = $(element);
     const text = normalizeCellText(table.text());
     let score = 0;
@@ -78,15 +79,15 @@ function findBasicTable(html: string) {
     if (text.includes("ATK")) score += 1;
     if (text.includes("Lv.")) score += 1;
     if (score > bestScore) {
-      best = table;
+      bestTableIndex = tableIndex;
       bestScore = score;
     }
   });
 
-  if (!best || bestScore < 8) {
+  if (bestTableIndex < 0 || bestScore < 8) {
     throw new Error("basic servant status table not found");
   }
-  return { $, table: best };
+  return { $, table: $(tables[bestTableIndex]) };
 }
 
 function levelColumns(header: string[]): Map<number, number> {
