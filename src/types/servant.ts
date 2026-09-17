@@ -1,3 +1,8 @@
+import type {
+  ServantClassSkillData,
+  ServantSkillData,
+} from "../effects/types.js";
+
 export type ServantSource = "official" | "original";
 
 export type ServantClass =
@@ -78,4 +83,6 @@ export interface ServantStatusRecord {
   hidden?: ServantHiddenStatusValues;
   cards?: ServantCommandCardCounts;
   noblePhantasm?: NoblePhantasmData;
+  skills?: ServantSkillData[];
+  classSkills?: ServantClassSkillData[];
 }
