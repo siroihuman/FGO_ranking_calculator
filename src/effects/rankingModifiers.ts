@@ -14,6 +14,7 @@ export interface RankingModifierOptions {
   includeSkills?: boolean;
   includeConditionalEffects?: boolean;
   cardType?: CommandCardType;
+  includeAllCardTypes?: boolean;
   noblePhantasm?: boolean;
   overchargeStage?: OverchargeStage;
   includeNoblePhantasmPreAttackEffects?: boolean;
@@ -50,7 +51,12 @@ function enemyTarget(effect: NormalizedRankingEffect): boolean {
   return effect.target === "enemy_single" || effect.target === "all_enemies";
 }
 
-function matchesCard(effect: NormalizedRankingEffect, cardType: CommandCardType | undefined): boolean {
+function matchesCard(
+  effect: NormalizedRankingEffect,
+  cardType: CommandCardType | undefined,
+  includeAllCardTypes: boolean,
+): boolean {
+  if (includeAllCardTypes) return true;
   return effect.cardType === undefined || effect.cardType === cardType;
 }
 
@@ -60,7 +66,11 @@ function allowedEffect(
 ): boolean {
   if (effect.isSpecialAttack) return false;
   if (!options.includeConditionalEffects && effect.conditionText) return false;
-  return matchesCard(effect, options.cardType);
+  return matchesCard(
+    effect,
+    options.cardType,
+    options.includeAllCardTypes ?? false,
+  );
 }
 
 function percentToPermille(value: number | undefined): number {
