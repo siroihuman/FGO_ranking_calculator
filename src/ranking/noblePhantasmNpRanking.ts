@@ -1,3 +1,8 @@
+import type { NormalizedRankingEffect } from "../effects/types.js";
+import {
+  resolveRankingModifierTotals,
+  type OverchargeStage,
+} from "../effects/rankingModifiers.js";
 import type { ServantSource, ServantStatusRecord } from "../types/servant.js";
 import { calculateNoblePhantasmNp } from "../formulas/noblePhantasmNp.js";
 import { npUnitsToPercent } from "../formulas/cardNp.js";
@@ -8,6 +13,9 @@ export interface NoblePhantasmNpRankingOptions {
   targetNpRatePermille?: number;
   overkillHitsPerEnemy?: number;
   descending?: boolean;
+  skills?: boolean;
+  conditionalEffects?: boolean;
+  overchargeStage?: OverchargeStage;
 }
 
 export interface NoblePhantasmNpRankingEntry {
@@ -16,6 +24,8 @@ export interface NoblePhantasmNpRankingEntry {
   npPercent: number;
   npUnits: number;
   hitCount: number;
+  usesProbabilisticEffect: boolean;
+  appliedEffects: NormalizedRankingEffect[];
 }
 
 export function buildNoblePhantasmNpRanking(
@@ -31,6 +41,14 @@ export function buildNoblePhantasmNpRanking(
     if (!np || np.targetScope === "support" || npGainRate === undefined || hitCount === undefined) {
       return [];
     }
+    const modifiers = resolveRankingModifierTotals(servant, {
+      includeSkills: options.skills ?? false,
+      includeConditionalEffects: options.conditionalEffects ?? false,
+      cardType: np.cardType,
+      noblePhantasm: true,
+      overchargeStage: options.overchargeStage ?? 1,
+      includeNoblePhantasmPreAttackEffects: true,
+    });
     const npUnits = calculateNoblePhantasmNp({
       npGainRate,
       cardType: np.cardType,
@@ -38,8 +56,18 @@ export function buildNoblePhantasmNpRanking(
       enemyCount: options.enemyCount ?? (np.targetScope === "all" ? 3 : 1),
       targetNpRatePermille: options.targetNpRatePermille ?? 1000,
       overkillHitsPerEnemy: options.overkillHitsPerEnemy ?? 0,
+      cardPerformanceModPermille: modifiers.cardPerformanceModPermille,
+      cardResistancePermille: modifiers.cardResistancePermille,
+      npGainModPermille: modifiers.npGainModPermille,
     });
-    return [{ servant, npUnits, npPercent: npUnitsToPercent(npUnits), hitCount }];
+    return [{
+      servant,
+      npUnits,
+      npPercent: npUnitsToPercent(npUnits),
+      hitCount,
+      usesProbabilisticEffect: modifiers.usesProbabilisticEffect,
+      appliedEffects: modifiers.appliedEffects,
+    }];
   });
 
   const descending = options.descending ?? true;
