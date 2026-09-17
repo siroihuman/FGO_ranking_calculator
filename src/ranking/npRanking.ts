@@ -1,3 +1,5 @@
+import type { NormalizedRankingEffect } from "../effects/types.js";
+import { resolveRankingModifierTotals } from "../effects/rankingModifiers.js";
 import type {
   ServantCommandCardCounts,
   ServantSource,
@@ -23,6 +25,7 @@ export interface NpRankingServant {
   busterHits?: number;
   extraHits?: number;
   cards: ServantCommandCardCounts;
+  record?: ServantStatusRecord;
 }
 
 export interface NpRankingOptions {
@@ -33,6 +36,8 @@ export interface NpRankingOptions {
   critical?: boolean;
   overkillHits?: number;
   source?: "all" | ServantSource;
+  skills?: boolean;
+  conditionalEffects?: boolean;
 }
 
 export interface NpRankingEntry extends NpRankingServant {
@@ -40,6 +45,8 @@ export interface NpRankingEntry extends NpRankingServant {
   npUnits: number;
   npPercent: number;
   hits: number;
+  usesProbabilisticEffect: boolean;
+  appliedEffects: NormalizedRankingEffect[];
 }
 
 export function npRankingServantsFromStatus(
@@ -60,6 +67,7 @@ export function npRankingServantsFromStatus(
       busterHits: hidden.busterHits,
       extraHits: hidden.extraHits,
       cards: record.cards,
+      record,
     }];
   });
 }
@@ -80,6 +88,14 @@ export function buildNpRanking(
     if (source !== "all" && servant.source !== source) return [];
     const hits = hitsFor(servant, options.cardType);
     if (hits === undefined || hits <= 0) return [];
+    const modifiers = servant.record
+      ? resolveRankingModifierTotals(servant.record, {
+          includeSkills: options.skills ?? false,
+          includeConditionalEffects: options.conditionalEffects ?? false,
+          cardType: options.cardType === "extra" ? undefined : options.cardType,
+          noblePhantasm: false,
+        })
+      : undefined;
     const npUnits = calculateNormalCardNp({
       npGainRate: servant.npGainRate,
       cardType: options.cardType,
@@ -89,8 +105,19 @@ export function buildNpRanking(
       targetNpRatePermille: options.targetNpRatePermille,
       critical: options.critical,
       overkillHits: options.overkillHits,
+      cardPerformanceModPermille: modifiers?.cardPerformanceModPermille,
+      cardResistancePermille: modifiers?.cardResistancePermille,
+      npGainModPermille: modifiers?.npGainModPermille,
     });
-    return [{ ...servant, rank: 0, npUnits, npPercent: npUnitsToPercent(npUnits), hits }];
+    return [{
+      ...servant,
+      rank: 0,
+      npUnits,
+      npPercent: npUnitsToPercent(npUnits),
+      hits,
+      usesProbabilisticEffect: modifiers?.usesProbabilisticEffect ?? false,
+      appliedEffects: modifiers?.appliedEffects ?? [],
+    }];
   });
 
   rows.sort((left, right) =>
