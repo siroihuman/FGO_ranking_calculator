@@ -6,7 +6,7 @@ import {
   type ServantPageLink,
 } from "./listCollector.js";
 import { fetchPageHtml, type FetchPageOptions } from "./pageFetcher.js";
-import { parseServantStatusPage } from "../parsers/statusParser.js";
+import { parseServantCompleteStatusPage } from "../parsers/completeStatusParser.js";
 
 export interface StatusCollectionError {
   source: ServantPageLink["source"];
@@ -68,7 +68,7 @@ export async function collectStatusData(
       const link = links[index];
       try {
         const html = await fetchPageHtml(link.pageUrl, options);
-        records.push(parseServantStatusPage(html, {
+        records.push(parseServantCompleteStatusPage(html, {
           source: link.source,
           pageId: link.pageId,
           pageUrl: link.pageUrl,
