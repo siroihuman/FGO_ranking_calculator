@@ -18,6 +18,8 @@ export interface SystemActionDefinition {
   /** Additional NP based on the current gauge. 1000 = +100% of current NP. */
   npCurrentGainPermille?: number;
   cooldownReduction?: SystemCooldownReduction;
+  /** Whether Append Skill 5 may advance this action's own cooldown after use. */
+  skillReloadingEligible?: boolean;
   conditional?: boolean;
   probabilistic?: boolean;
 }
@@ -32,6 +34,7 @@ export interface SystemActionUseResult {
   npAfter: number;
   cooldownBefore: number;
   cooldownAfter: number;
+  skillReloadingApplied?: boolean;
 }
 
 export interface SystemActionWaveResult {
@@ -61,6 +64,8 @@ export interface SystemActionPlanInput {
   actions: readonly SystemActionDefinition[];
   actionsByWave: readonly [readonly string[], readonly string[], readonly string[]];
   postNoblePhantasmNpByWave?: readonly [number, number, number];
+  /** Append Skill 5 activations available. Each eligible action can consume it once. */
+  skillReloadingUses?: number;
 }
 
 interface ActionRuntimeState {
@@ -127,6 +132,11 @@ export function simulateSystemActionPlan(
   let currentNp = nonNegativeFinite(input.initialNp, "initialNp");
   const actionMap = new Map<string, SystemActionDefinition>();
   const runtime = new Map<string, ActionRuntimeState>();
+  let skillReloadingRemaining = nonNegativeInteger(
+    input.skillReloadingUses ?? 0,
+    "skillReloadingUses",
+  );
+  const reloadedActionIds = new Set<string>();
 
   for (const action of input.actions) {
     if (actionMap.has(action.id)) throw new RangeError(`duplicate system action id: ${action.id}`);
@@ -176,11 +186,34 @@ export function simulateSystemActionPlan(
       currentNp = applyNpAction(currentNp, definition);
       state.uses += 1;
       state.cooldown = definition.cooldownTurns ?? 0;
+
+      let skillReloadingApplied = false;
+      if (
+        definition.skillReloadingEligible
+        && skillReloadingRemaining > 0
+        && !reloadedActionIds.has(definition.id)
+      ) {
+        state.cooldown = Math.max(0, state.cooldown - 1);
+        skillReloadingRemaining -= 1;
+        reloadedActionIds.add(definition.id);
+        skillReloadingApplied = true;
+      }
+
       applyCooldownReduction(actionMap, runtime, definition.cooldownReduction);
       usesConditionalAction ||= definition.conditional ?? false;
       usesProbabilisticAction ||= definition.probabilistic ?? false;
 
-      actionUses.push({ actionId, label: definition.label, wave, valid: true, npBefore, npAfter: currentNp, cooldownBefore, cooldownAfter: state.cooldown });
+      actionUses.push({
+        actionId,
+        label: definition.label,
+        wave,
+        valid: true,
+        npBefore,
+        npAfter: currentNp,
+        cooldownBefore,
+        cooldownAfter: state.cooldown,
+        ...(skillReloadingApplied ? { skillReloadingApplied: true } : {}),
+      });
     }
 
     const npBeforeNoblePhantasm = currentNp;
