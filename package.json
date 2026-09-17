@@ -1,0 +1,23 @@
+{
+  "name": "fgo-ranking-calculator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && npm run build:browser",
+    "build:browser": "tsx scripts/build-browser.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "update:data": "tsx scripts/update-data.ts"
+  },
+  "dependencies": {
+    "cheerio": "^1.1.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "esbuild": "^0.25.10",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}
