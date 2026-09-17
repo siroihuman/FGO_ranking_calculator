@@ -70,8 +70,10 @@ function activationRate(text: string): number | undefined {
 }
 
 function embeddedCondition(text: string): string | undefined {
-  const angle = text.match(/[<＜]([^>＞]+)[>＞]/);
-  if (angle) return angle[1].trim();
+  const angles = [...text.matchAll(/[<＜]([^>＞]+)[>＞]/g)]
+    .map((match) => match[1].trim())
+    .filter((value) => !/^OC\s*[:：]/i.test(value));
+  if (angles.length > 0) return angles[0];
   const condition = text.match(/([^。]+(?:場合|時)(?:のみ)?)/);
   return condition?.[1]?.trim();
 }
