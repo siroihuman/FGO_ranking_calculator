@@ -13,7 +13,10 @@ export interface SystemActionDefinition {
   cooldownTurns?: number;
   maxUses?: number;
   allowedWaves?: readonly SystemWave[];
+  /** Flat NP percentage added immediately. */
   npGrant?: number;
+  /** Additional NP based on the current gauge. 1000 = +100% of current NP. */
+  npCurrentGainPermille?: number;
   cooldownReduction?: SystemCooldownReduction;
   conditional?: boolean;
   probabilistic?: boolean;
@@ -108,15 +111,16 @@ function tickCooldowns(states: Map<string, ActionRuntimeState>): void {
   }
 }
 
-/**
- * Simulates one explicitly ordered three-wave action plan.
- *
- * Actions are resolved in the exact order listed for each wave, so cooldown
- * reduction before/after an attacker skill can produce different results.
- * NP charge skills are applied before the wave's Noble Phantasm. When the NP
- * fires, the pre-fire gauge is consumed and the next gauge begins from the
- * supplied refund plus post-NP gains.
- */
+function applyNpAction(currentNp: number, action: SystemActionDefinition): number {
+  const flat = nonNegativeFinite(action.npGrant ?? 0, `${action.id}.npGrant`);
+  const currentGain = nonNegativeFinite(
+    action.npCurrentGainPermille ?? 0,
+    `${action.id}.npCurrentGainPermille`,
+  );
+  return currentNp + flat + currentNp * currentGain / 1000;
+}
+
+/** Simulates one explicitly ordered three-wave action plan. */
 export function simulateSystemActionPlan(
   input: SystemActionPlanInput,
 ): SystemActionPlanResult {
@@ -125,16 +129,11 @@ export function simulateSystemActionPlan(
   const runtime = new Map<string, ActionRuntimeState>();
 
   for (const action of input.actions) {
-    if (actionMap.has(action.id)) {
-      throw new RangeError(`duplicate system action id: ${action.id}`);
-    }
-    if (action.cooldownTurns !== undefined) {
-      nonNegativeInteger(action.cooldownTurns, `${action.id}.cooldownTurns`);
-    }
-    if (action.maxUses !== undefined) {
-      nonNegativeInteger(action.maxUses, `${action.id}.maxUses`);
-    }
+    if (actionMap.has(action.id)) throw new RangeError(`duplicate system action id: ${action.id}`);
+    if (action.cooldownTurns !== undefined) nonNegativeInteger(action.cooldownTurns, `${action.id}.cooldownTurns`);
+    if (action.maxUses !== undefined) nonNegativeInteger(action.maxUses, `${action.id}.maxUses`);
     nonNegativeFinite(action.npGrant ?? 0, `${action.id}.npGrant`);
+    nonNegativeFinite(action.npCurrentGainPermille ?? 0, `${action.id}.npCurrentGainPermille`);
     actionMap.set(action.id, action);
     runtime.set(action.id, { cooldown: 0, uses: 0 });
   }
@@ -154,17 +153,7 @@ export function simulateSystemActionPlan(
       const definition = actionMap.get(actionId);
       const state = runtime.get(actionId);
       if (!definition || !state) {
-        const invalid: SystemActionUseResult = {
-          actionId,
-          label: actionId,
-          wave,
-          valid: false,
-          reason: "unknown action",
-          npBefore: currentNp,
-          npAfter: currentNp,
-          cooldownBefore: 0,
-          cooldownAfter: 0,
-        };
+        const invalid: SystemActionUseResult = { actionId, label: actionId, wave, valid: false, reason: "unknown action", npBefore: currentNp, npAfter: currentNp, cooldownBefore: 0, cooldownAfter: 0 };
         actionUses.push(invalid);
         invalidActions.push(invalid);
         continue;
@@ -173,72 +162,35 @@ export function simulateSystemActionPlan(
       const npBefore = currentNp;
       const cooldownBefore = state.cooldown;
       let reason: string | undefined;
-      if (definition.allowedWaves && !definition.allowedWaves.includes(wave)) {
-        reason = `action is not allowed on wave ${wave}`;
-      } else if (state.cooldown > 0) {
-        reason = `cooldown remaining: ${state.cooldown}`;
-      } else if (definition.maxUses !== undefined && state.uses >= definition.maxUses) {
-        reason = "maximum uses reached";
-      }
+      if (definition.allowedWaves && !definition.allowedWaves.includes(wave)) reason = `action is not allowed on wave ${wave}`;
+      else if (state.cooldown > 0) reason = `cooldown remaining: ${state.cooldown}`;
+      else if (definition.maxUses !== undefined && state.uses >= definition.maxUses) reason = "maximum uses reached";
 
       if (reason) {
-        const invalid: SystemActionUseResult = {
-          actionId,
-          label: definition.label,
-          wave,
-          valid: false,
-          reason,
-          npBefore,
-          npAfter: currentNp,
-          cooldownBefore,
-          cooldownAfter: state.cooldown,
-        };
+        const invalid: SystemActionUseResult = { actionId, label: definition.label, wave, valid: false, reason, npBefore, npAfter: currentNp, cooldownBefore, cooldownAfter: state.cooldown };
         actionUses.push(invalid);
         invalidActions.push(invalid);
         continue;
       }
 
-      currentNp += definition.npGrant ?? 0;
+      currentNp = applyNpAction(currentNp, definition);
       state.uses += 1;
       state.cooldown = definition.cooldownTurns ?? 0;
       applyCooldownReduction(actionMap, runtime, definition.cooldownReduction);
       usesConditionalAction ||= definition.conditional ?? false;
       usesProbabilisticAction ||= definition.probabilistic ?? false;
 
-      actionUses.push({
-        actionId,
-        label: definition.label,
-        wave,
-        valid: true,
-        npBefore,
-        npAfter: currentNp,
-        cooldownBefore,
-        cooldownAfter: state.cooldown,
-      });
+      actionUses.push({ actionId, label: definition.label, wave, valid: true, npBefore, npAfter: currentNp, cooldownBefore, cooldownAfter: state.cooldown });
     }
 
     const npBeforeNoblePhantasm = currentNp;
     const canFire = npBeforeNoblePhantasm >= 100;
     if (!canFire && failedWave === undefined) failedWave = wave;
     const refund = nonNegativeFinite(input.refundByWave[waveIndex], `refundByWave[${waveIndex}]`);
-    const postNp = nonNegativeFinite(
-      input.postNoblePhantasmNpByWave?.[waveIndex] ?? 0,
-      `postNoblePhantasmNpByWave[${waveIndex}]`,
-    );
+    const postNp = nonNegativeFinite(input.postNoblePhantasmNpByWave?.[waveIndex] ?? 0, `postNoblePhantasmNpByWave[${waveIndex}]`);
 
     currentNp = canFire ? refund + postNp : npBeforeNoblePhantasm;
-    waves.push({
-      wave,
-      npAtWaveStart,
-      actionUses,
-      npBeforeNoblePhantasm,
-      canFire,
-      shortage: Math.max(0, 100 - npBeforeNoblePhantasm),
-      noblePhantasmRefund: refund,
-      postNoblePhantasmNp: postNp,
-      npAtWaveEnd: currentNp,
-    });
-
+    waves.push({ wave, npAtWaveStart, actionUses, npBeforeNoblePhantasm, canFire, shortage: Math.max(0, 100 - npBeforeNoblePhantasm), noblePhantasmRefund: refund, postNoblePhantasmNp: postNp, npAtWaveEnd: currentNp });
     tickCooldowns(runtime);
   }
 
