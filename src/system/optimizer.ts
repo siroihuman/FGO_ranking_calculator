@@ -48,10 +48,7 @@ function legalOnWave(action: SystemActionDefinition, wave: SystemWave): boolean 
   return !action.allowedWaves || action.allowedWaves.includes(wave);
 }
 
-function targetsAction(
-  target: SystemActionDefinition,
-  source: SystemActionDefinition,
-): boolean {
+function targetsAction(target: SystemActionDefinition, source: SystemActionDefinition): boolean {
   const reduction = source.cooldownReduction;
   if (!reduction) return false;
   if (reduction.targetActionIds?.includes(target.id)) return true;
@@ -63,9 +60,11 @@ function useAction(
   action: SystemActionDefinition,
   actionMap: ReadonlyMap<string, SystemActionDefinition>,
 ): SearchState {
+  const currentGain = action.npCurrentGainPermille ?? 0;
+  const nextNp = state.np + (action.npGrant ?? 0) + state.np * currentGain / 1000;
   const next: SearchState = {
     ...state,
-    np: state.np + (action.npGrant ?? 0),
+    np: nextNp,
     cooldowns: cloneMap(state.cooldowns),
     totalUses: cloneMap(state.totalUses),
     plan: state.plan.map((wave) => [...wave]) as [string[], string[], string[]],
@@ -82,10 +81,7 @@ function useAction(
     for (const target of actionMap.values()) {
       if (!targetsAction(target, action)) continue;
       const current = next.cooldowns.get(target.id) ?? 0;
-      next.cooldowns.set(
-        target.id,
-        Math.max(0, current - action.cooldownReduction.turns),
-      );
+      next.cooldowns.set(target.id, Math.max(0, current - action.cooldownReduction.turns));
     }
   }
   return next;
@@ -112,30 +108,19 @@ function betterCandidate(left: Candidate | undefined, right: Candidate): Candida
   const l = left.state;
   const r = right.state;
   if (r.actionUses !== l.actionUses) return r.actionUses < l.actionUses ? right : left;
-  if (r.conditionalUses !== l.conditionalUses) {
-    return r.conditionalUses < l.conditionalUses ? right : left;
-  }
-  if (r.probabilisticUses !== l.probabilisticUses) {
-    return r.probabilisticUses < l.probabilisticUses ? right : left;
-  }
+  if (r.conditionalUses !== l.conditionalUses) return r.conditionalUses < l.conditionalUses ? right : left;
+  if (r.probabilisticUses !== l.probabilisticUses) return r.probabilisticUses < l.probabilisticUses ? right : left;
   const rText = JSON.stringify(r.plan);
   const lText = JSON.stringify(l.plan);
   return rText.localeCompare(lText) < 0 ? right : left;
 }
 
-/**
- * Finds a legal three-wave NP plan. The search is intentionally focused on NP
- * charge and cooldown manipulation; damage-buff timing is optimized separately.
- * Among equally valid loops it prefers fewer actions, then fewer conditional
- * effects, then fewer probabilistic effects.
- */
+/** Finds a legal three-wave NP plan. */
 export function optimizeThreeWaveSystem(
   options: SystemOptimizationOptions,
 ): SystemOptimizationResult {
   const actionMap = new Map(options.actions.map((action) => [action.id, action]));
-  if (actionMap.size !== options.actions.length) {
-    throw new RangeError("system actions must have unique ids");
-  }
+  if (actionMap.size !== options.actions.length) throw new RangeError("system actions must have unique ids");
   const cooldowns = new Map(options.actions.map((action) => [action.id, 0]));
   const uses = new Map(options.actions.map((action) => [action.id, 0]));
   const maxPerWave = options.maxUsesPerActionPerWave ?? 2;
@@ -155,13 +140,9 @@ export function optimizeThreeWaveSystem(
           refundByWave: options.refundByWave,
           actions: options.actions,
           actionsByWave: state.plan,
-          ...(options.postNoblePhantasmNpByWave
-            ? { postNoblePhantasmNpByWave: options.postNoblePhantasmNpByWave }
-            : {}),
+          ...(options.postNoblePhantasmNpByWave ? { postNoblePhantasmNpByWave: options.postNoblePhantasmNpByWave } : {}),
         });
-        if (simulation.established) {
-          best = betterCandidate(best, { state, simulation });
-        }
+        if (simulation.established) best = betterCandidate(best, { state, simulation });
       } else {
         const nextNp = options.refundByWave[state.waveIndex]
           + (options.postNoblePhantasmNpByWave?.[state.waveIndex] ?? 0);
@@ -199,11 +180,15 @@ export function optimizeThreeWaveSystem(
   }, new Map());
 
   if (!best) return { established: false };
-  return {
-    established: true,
-    actionsByWave: best.state.plan,
-    simulation: best.simulation,
-  };
+  return { established: true, actionsByWave: best.state.plan, simulation: best.simulation };
+}
+
+function combinePostNp(
+  preset: readonly [number, number, number] | undefined,
+  extra: readonly [number, number, number] | undefined,
+): readonly [number, number, number] | undefined {
+  if (!preset && !extra) return undefined;
+  return [0, 1, 2].map((index) => (preset?.[index] ?? 0) + (extra?.[index] ?? 0)) as [number, number, number];
 }
 
 export function optimizePresetSystem(
@@ -212,15 +197,12 @@ export function optimizePresetSystem(
     attackerActions?: readonly SystemActionDefinition[];
   },
 ): SystemOptimizationResult {
+  const postNp = combinePostNp(preset.postNoblePhantasmNpByWave, options.postNoblePhantasmNpByWave);
   return optimizeThreeWaveSystem({
     initialNp: preset.initialNp,
     refundByWave: options.refundByWave,
     actions: [...preset.actions, ...(options.attackerActions ?? [])],
-    ...(options.postNoblePhantasmNpByWave
-      ? { postNoblePhantasmNpByWave: options.postNoblePhantasmNpByWave }
-      : {}),
-    ...(options.maxUsesPerActionPerWave !== undefined
-      ? { maxUsesPerActionPerWave: options.maxUsesPerActionPerWave }
-      : {}),
+    ...(postNp ? { postNoblePhantasmNpByWave: postNp } : {}),
+    ...(options.maxUsesPerActionPerWave !== undefined ? { maxUsesPerActionPerWave: options.maxUsesPerActionPerWave } : {}),
   });
 }
